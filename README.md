@@ -18,20 +18,47 @@ pip install -r requirements.txt
 ## 사용법
 
 ```bash
-# Claude API로 번역 (ANTHROPIC_API_KEY 환경 변수 필요)
+# 기본값: 무료 Google 번역 (API 키 필요 없음, 인터넷 필요)
 python -m pdf_translator 논문.pdf -o 논문_ko.pdf --report 보고서.json
 
-# 무료 Google 번역 (API 키 필요 없음)
-python -m pdf_translator 논문.pdf --engine google
+# 내 컴퓨터에서 도는 무료 번역기 Argos (처음 한 번 모델을 받은 뒤에는 인터넷도 필요 없음)
+pip install argostranslate
+python -m pdf_translator 논문.pdf --engine argos
 
-# 직접 준비한 번역 사전 사용: {"영어 문장": "한국어 문장"} 형식의 JSON
-python -m pdf_translator examples/sample_en.pdf --engine dict --dict examples/sample_translations_ko.json
+# 번역 사전만으로 번역 (네트워크 없음)
+python -m pdf_translator 논문.pdf --engine dict
 ```
+
+Claude API(`--engine claude`)는 선택 사항이며, 위 방법들은 Claude API를 전혀 쓰지 않습니다.
+
+## 번역 사전
+
+번역할 때마다 **번역 사전**(`translation_dict.json`)이 자동으로 만들어지고 늘어납니다.
+
+```json
+{
+  "Water was the biggest practical problem.": "가장 큰 현실적인 문제는 물이었다.",
+  "Shared tools were the second problem, ...": "두 번째 문제는 공용 도구였는데, ..."
+}
+```
+
+1. 문장마다 **먼저 사전에서 찾고**, 사전에 없는 문장만 번역 엔진에 보냅니다.
+2. 엔진이 번역한 문장 중 **문장 검사와 문단 검사를 통과한 것만** 사전에 추가합니다.
+   영어가 그대로 남았거나 숫자가 빠졌거나 문장 짝이 어긋난 번역은 넣지 않습니다.
+3. 사전은 쪽마다 저장됩니다. 중간에 인터넷이 끊겨 멈춰도 그때까지 번역한 문장은 남고, 다시 실행하면 이어서 번역합니다.
+4. 사전 파일을 직접 열어 번역을 고칠 수 있습니다. **사전에 있는 번역은 사람이 확인한 것으로 보고** 다시 번역하거나 덮어쓰지 않습니다.
+   고친 다음 `--engine dict`로 다시 돌리면 고친 번역으로 PDF를 다시 만듭니다.
+
+- 기본 위치: 입력 PDF와 같은 폴더의 `translation_dict.json`. 같은 폴더의 PDF들은 사전 하나를 함께 씁니다.
+- `--dict 경로`: 다른 사전 파일 사용 (예: 분야별 용어 사전)
+- `--no-dict`: 사전을 읽지도 만들지도 않음
+- 실행이 끝나면 `전체 n문장, 사전에서 찾음 n, 새로 추가 n`을 보여 줍니다(`--report`의 `dictionary_*` 항목에도 기록).
 
 | 옵션 | 설명 |
 |---|---|
 | `-o` | 좌우 비교 PDF 경로 (기본값: `입력이름_ko.pdf`) |
-| `--engine` | `claude`(기본값), `google`, `dict` |
+| `--engine` | `google`(기본값), `argos`, `dict`, `claude` |
+| `--dict 경로` / `--no-dict` | 번역 사전 위치 지정 / 사용 안 함 |
 | `--pages 1-3,5` | 일부 쪽만 번역 |
 | `--translated-only 경로` | 번역본만 담은 PDF도 저장 |
 | `--report 경로` | 문단별 번역 검사 결과, 배치 수정 내역, 남은 차이를 JSON으로 저장 |
@@ -42,9 +69,10 @@ python -m pdf_translator examples/sample_en.pdf --engine dict --dict examples/sa
 파이썬 코드에서 바로 쓸 수도 있습니다.
 
 ```python
-from pdf_translator import translate_pdf, ClaudeTranslator
-report = translate_pdf("in.pdf", "out.pdf", ClaudeTranslator())
-print(report.ok)
+from pdf_translator import translate_pdf, GoogleTranslator, TranslationMemory
+memory = TranslationMemory.load("translation_dict.json")
+report = translate_pdf("in.pdf", "out.pdf", GoogleTranslator(), memory=memory)
+print(report.ok, report.dictionary_added)
 ```
 
 ## 동작 방식
@@ -57,7 +85,7 @@ PDF ─▶ ① 텍스트 인식 ─▶ ② 번역 + 문단/문장 검사 ─▶ 
    줄을 문단으로 묶고(글자 크기·굵기 변화나 넓은 줄 간격이 나오면 새 문단), 정렬 방식(왼쪽/가운데/오른쪽/양쪽),
    줄 간격, 첫 줄 들여쓰기를 알아냅니다. 줄 끝 하이픈으로 끊긴 단어는 다시 잇고, 문단을 문장으로 나눕니다
    (`segment.py`: Dr., e.g., Fig., 3.5, J. Smith, "1." 같은 번호를 문장 끝으로 착각하지 않음).
-2. **번역** (`translate.py`): 문단 단위로 묶어 번역하되 영어 문장 하나에 한국어 문장 하나가 대응하도록 요청합니다.
+2. **번역** (`translate.py`): 번역 사전에 있는 문장은 그대로 쓰고, 나머지는 문단 단위로 묶어 번역하되 영어 문장 하나에 한국어 문장 하나가 대응하도록 요청합니다.
    같은 쪽의 전체 글을 문맥으로 함께 보냅니다. 그다음 두 단계로 검사합니다(`checks.py`).
    - **문단 단위 검사**: 문장 수가 같은지, 숫자가 빠지지 않았는지, 같은 번역이 연달아 나오지 않는지(문장 정렬 어긋남), 길이 비율이 정상인지
      → 문장 수가 어긋나면 문단을 다시 번역하고, 그래도 안 되면 문장마다 따로 번역합니다.
@@ -77,11 +105,13 @@ PDF ─▶ ① 텍스트 인식 ─▶ ② 번역 + 문단/문장 검사 ─▶ 
 
 ## 번역 엔진
 
-- **claude** (기본값): Anthropic Claude API(`claude-opus-5-5`)를 쓰고, 문장 정렬을 지키도록 JSON 구조로 응답을 받습니다.
-  `ANTHROPIC_API_KEY`가 필요하며 사용량만큼 요금이 나옵니다. 요청이 안전 정책에 걸려 거절되면 서버가 다른 모델로
-  자동 재시도하도록(`fallbacks: "default"`) 설정해 두었습니다. `--model`로 다른 모델을 고를 수 있습니다.
-- **google**: `deep-translator`로 무료 Google 번역을 사용합니다. 키가 없어도 되지만 비공식 경로라 많이 쓰면 막힐 수 있습니다.
-- **dict**: 사람이 직접 번역하거나 다듬은 문장을 JSON으로 넣습니다. 보고서의 `translation` 값을 고쳐 다시 넣는 검수용으로도 쓸 수 있습니다.
+- **google** (기본값): `deep-translator`로 무료 Google 번역을 씁니다. API 키는 필요 없고 인터넷만 있으면 됩니다.
+  공식 API가 아니라서 한꺼번에 너무 많이 번역하면 잠시 막힐 수 있습니다. 그때도 번역 사전에 진행분이 남으니 나중에 이어서 돌리면 됩니다.
+- **argos**: [Argos Translate](https://github.com/argosopentech/argos-translate)로 내 컴퓨터에서 직접 번역합니다(무료, 오픈소스).
+  처음 한 번만 영어→한국어 모델을 내려받고, 그다음부터는 인터넷 없이 동작합니다. 번역 품질은 Google보다 낮은 편입니다.
+- **dict**: 번역 사전에 있는 문장만 씁니다. 사전에 없는 문장은 영어로 남고 보고서에 "번역되지 않음"으로 표시됩니다.
+- **claude** (선택): Anthropic Claude API(`claude-opus-5-5`, `ANTHROPIC_API_KEY` 필요, 사용량만큼 요금이 나옴)를 씁니다.
+  요청이 거절되면 서버가 다른 모델로 자동으로 다시 시도합니다(`fallbacks: "default"`).
 
 새 엔진은 `Translator`를 상속해 `translate_paragraphs()`만 구현하면 됩니다.
 
@@ -99,6 +129,8 @@ python -m pytest
 - **일부러 크기·위치·줄 간격을 틀리게 그려도** 검증·수정 반복으로 원본과 같아지는지
 - 번역문이 아주 길어도 다른 문단이나 그림과 겹치지 않는지, 크기를 줄였다면 보고서에 남는지
 - 나눔고딕에 없는 글자 처리, 좌우 비교 PDF(왼쪽 영어 / 오른쪽 한국어)
+- 번역 사전: 번역하면서 만들어지는지, 다음 실행 때 엔진 대신 사전을 쓰는지, 사람이 고친 번역을 지키는지,
+  검사에 실패한 번역은 넣지 않는지, 중간에 실패해도 진행분이 저장되는지
 
 ## 한계
 

@@ -1,5 +1,6 @@
 pymupdf>=1.24
-anthropic>=1.0        # --engine claude
-deep-translator>=1.11 # --engine google (무료)
+deep-translator>=1.11 # --engine google (기본값, 무료)
+# argostranslate      # --engine argos (선택, 오프라인 무료 번역. 용량이 커서 필요할 때만 설치)
+anthropic>=1.0        # --engine claude (선택)
 pytest>=8             # 테스트
 reportlab>=4          # (선택) 테스트용 PDF 생성

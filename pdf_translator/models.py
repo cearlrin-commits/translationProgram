@@ -88,6 +88,7 @@ class TranslatedParagraph:
     sentences: list[str]
     issues: list[TranslationIssue] = field(default_factory=list)  # 최종적으로 남은 문제
     retries: int = 0
+    from_dictionary: int = 0  # 번역 사전에서 가져온 문장 수
 
     @property
     def text(self) -> str:

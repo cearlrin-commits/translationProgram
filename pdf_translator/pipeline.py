@@ -12,6 +12,7 @@ import pymupdf as fitz
 from .extract import extract_document
 from .fonts import KoreanFonts, default_fonts
 from .layout import LayoutEngine, LayoutParams, Plan, compute_regions, erase_original_text
+from .memory import TranslationMemory
 from .models import PageContent, Paragraph, TranslatedParagraph
 from .translate import Translator, translate_document
 from .verify import LayoutDiff, verify_page
@@ -29,6 +30,7 @@ class ParagraphReport:
     adjustments: list[str]
     translation_issues: list[dict]
     translation_retries: int
+    from_dictionary: int
     remaining_layout_diffs: list[dict]
     accepted_diffs: list[dict]
 
@@ -46,6 +48,10 @@ class Report:
     input: str
     output: str
     translator: str
+    dictionary: str | None = None  # 번역 사전 파일
+    dictionary_hits: int = 0  # 사전에서 찾아 쓴 문장 수
+    dictionary_added: int = 0  # 이번에 사전에 새로 추가된 문장 수
+    dictionary_size: int = 0
     pages: list[PageReport] = field(default_factory=list)
 
     @property
@@ -197,15 +203,19 @@ def compose_side_by_side(src: fitz.Document, translated: fitz.Document, pages: l
 def translate_pdf(input_path: str | Path, output_path: str | Path, translator: Translator, *,
                   pages: list[int] | None = None, translated_only_path: str | Path | None = None,
                   report_path: str | Path | None = None, max_fix_iterations: int = 6,
-                  fonts: KoreanFonts | None = None, header: bool = True) -> Report:
+                  fonts: KoreanFonts | None = None, header: bool = True,
+                  memory: TranslationMemory | None = None) -> Report:
     src = fitz.open(str(input_path))
     page_numbers = pages if pages is not None else list(range(len(src)))
     contents = extract_document(src, page_numbers)
     log.info("텍스트 인식 완료: %d쪽, 문단 %d개", len(contents), sum(len(c.paragraphs) for c in contents))
 
-    translations = translate_document(contents, translator)
+    translations = translate_document(contents, translator, memory=memory)
     engine = LayoutEngine(fonts or default_fonts())
     report = Report(str(input_path), str(output_path), translator.name)
+    if memory is not None:
+        report.dictionary = str(memory.path) if memory.path else None
+        report.dictionary_hits, report.dictionary_added, report.dictionary_size = memory.hits, memory.added, len(memory)
     translated = fitz.open()
     for content in contents:
         doc, page_report, diffs, plans, accepted = layout_page(src, content, translations, engine, max_fix_iterations)
@@ -217,7 +227,7 @@ def translate_pdf(input_path: str | Path, output_path: str | Path, translator: T
             page_report.paragraphs.append(ParagraphReport(
                 id=para.id, source=para.text, translation=tp.text, font_size=para.font_size,
                 rendered_size=plan.font_size, adjustments=plan.adjustments,
-                translation_issues=[asdict(i) for i in tp.issues], translation_retries=tp.retries,
+                translation_issues=[asdict(i) for i in tp.issues], translation_retries=tp.retries, from_dictionary=tp.from_dictionary,
                 remaining_layout_diffs=[asdict(d) for d in diffs if d.paragraph_id == para.id and d.is_hard
                                         and not any(a.kind == d.kind for a in accepted.get(para.id, []))],
                 accepted_diffs=[asdict(d) for d in diffs if d.paragraph_id == para.id
