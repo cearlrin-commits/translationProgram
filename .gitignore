@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*_ko.pdf
+!examples/sample_ko_side_by_side.pdf
